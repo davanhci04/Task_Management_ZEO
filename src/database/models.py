@@ -9,9 +9,9 @@ class User(Persistent):
         self.username = username
         self.password_hash = self._hash_password(password)
         self.projects = PersistentList()
-        # Thêm completed_tasks nếu chưa có
-        if not hasattr(self, 'completed_tasks'):
-            self.completed_tasks = PersistentList()
+        # BỎ completed_tasks
+        # if not hasattr(self, 'completed_tasks'):
+        #     self.completed_tasks = PersistentList()
         self.created_at = datetime.now()
     
     def _hash_password(self, password):
@@ -89,11 +89,30 @@ class Project(Persistent):
                     return False
         return True
     
+    def is_fully_completed(self):
+        """Kiểm tra xem tất cả tasks đã hoàn thành chưa"""
+        if not self.tasks:
+            return False  # Project không có task thì không được coi là completed
+        
+        return all(task.status == "Done" for task in self.tasks)
+    
+    def get_completion_percentage(self):
+        """Lấy phần trăm hoàn thành"""
+        if not self.tasks:
+            return 0
+        
+        completed_count = sum(1 for task in self.tasks if task.status == "Done")
+        return (completed_count / len(self.tasks)) * 100
+    
     def get_display_name(self):
         """Lấy tên hiển thị với thống kê"""
         total_tasks = len(self.tasks)
         completed_tasks = sum(1 for task in self.tasks if task.status == "Done")
-        return f"{self.name} ({completed_tasks}/{total_tasks})"
+        
+        if self.is_fully_completed():
+            return f"✅ {self.name} ({completed_tasks}/{total_tasks})"
+        else:
+            return f"{self.name} ({completed_tasks}/{total_tasks})"
     
     def get_unique_name(self):
         """Lấy tên unique (name + short ID)"""
@@ -139,18 +158,6 @@ class Task(Persistent):
         project_id = self.project_id or 'unknown'
         return f"projects/{project_id}/tasks/{self.id}"
 
-class CompletedTask(Persistent):
-    def __init__(self, task, project_name):
-        # Copy từ task gốc
-        self.id = task.id if hasattr(task, 'id') else str(uuid.uuid4())
-        self.title = task.title
-        self.description = task.description
-        self.deadline = task.deadline
-        self.project_name = project_name
-        self.project_id = task.project_id if hasattr(task, 'project_id') else None
-        self.created_at = task.created_at
-        self.completed_at = datetime.now()
-        
-        # Thêm metadata
-        self.priority = getattr(task, 'priority', 'Medium')
-        self.tags = getattr(task, 'tags', [])
+# class CompletedTask(Persistent):
+#     """REMOVED - Không sử dụng nữa"""
+#     pass

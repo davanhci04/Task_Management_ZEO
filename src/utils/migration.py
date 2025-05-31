@@ -1,7 +1,10 @@
+from logging import DEBUG
 import uuid
 import transaction
 from datetime import datetime
 from database.connection import db_connection
+from database.models import Task
+from PyQt5.QtWidgets import QMessageBox  # Import QMessageBox
 
 class DataMigration:
     """Migration script để thêm UUID cho dữ liệu cũ"""
@@ -40,13 +43,36 @@ class DataMigration:
                             migration_count += 1
                             print(f"    ✅ Added ID to task: {task.title}")
                 
-                # Migrate completed tasks
-                if hasattr(user, 'completed_tasks'):
-                    for completed_task in user.completed_tasks:
-                        if not hasattr(completed_task, 'id'):
-                            completed_task.id = str(uuid.uuid4())
+                # MIGRATION: Di chuyển completed tasks về projects (nếu có)
+                if hasattr(user, 'completed_tasks') and user.completed_tasks:
+                    print(f"  🔄 Migrating {len(user.completed_tasks)} completed tasks back to projects...")
+                    
+                    for completed_task in list(user.completed_tasks):
+                        # Tìm project tương ứng
+                        target_project = None
+                        if hasattr(completed_task, 'project_name'):
+                            target_project = next((p for p in user.projects if p.name == completed_task.project_name), None)
+                        
+                        if target_project:
+                            # Tạo task mới từ completed task với status "Done"
+                            restored_task = Task(
+                                completed_task.title,
+                                getattr(completed_task, 'description', ''),
+                                getattr(completed_task, 'deadline', ''),
+                                "Done"  # Set status to Done
+                            )
+                            restored_task.id = str(uuid.uuid4())
+                            restored_task.project_id = target_project.id
+                            if hasattr(completed_task, 'created_at'):
+                                restored_task.created_at = completed_task.created_at
+                            
+                            target_project.tasks.append(restored_task)
                             migration_count += 1
-                            print(f"  ✅ Added ID to completed task: {completed_task.title}")
+                            print(f"    ↩️ Restored completed task: {completed_task.title} to project: {target_project.name}")
+                    
+                    # Clear completed_tasks collection
+                    user.completed_tasks.clear()
+                    print(f"  🗑️ Cleared completed_tasks collection for user: {username}")
             
             transaction.commit()
             print(f"✅ Migration completed! {migration_count} items migrated.")
@@ -112,6 +138,11 @@ class DataMigration:
                     for task in project.tasks:
                         if not hasattr(task, 'id'):
                             return True
+                
+                # Check if has completed_tasks to migrate
+                if hasattr(user, 'completed_tasks') and user.completed_tasks:
+                    return True
+                    
             return False
             
         except Exception as e:
@@ -128,14 +159,21 @@ def run_migration_if_needed(self):
         # Kiểm tra xem có dữ liệu cũ không
         if DataMigration.check_migration_needed():
             print("📦 Running data migration...")
-            DataMigration.migrate_to_uuid()
-            DataMigration.validate_data_integrity()
+            success = DataMigration.migrate_to_uuid()
+            if success:
+                DataMigration.validate_data_integrity()
+            else:
+                print("⚠️ Migration failed, but continuing...")
         else:
             if DEBUG:
                 print("✅ No migration needed")
         
+    except ImportError as e:
+        print(f"⚠️ Migration import error: {e}")
+        print("Continuing without migration...")
     except Exception as e:
         print(f"❌ Migration error: {e}")
+        print("Continuing without migration...")
 
 def edit_task_by_identifiers(self, project_identifier, task_identifier):
     """Edit task bằng identifiers (ID hoặc name)"""
@@ -258,24 +296,6 @@ def delete_task_legacy(self, project, task):
     self.refresh_tree()
     QMessageBox.information(self, "Success", "Task deleted successfully!")
 
-def move_task_to_completed(self, project, task, user):
-    """Di chuyển task đã hoàn thành sang danh sách completed"""
-    from database.models import CompletedTask
-    from persistent.list import PersistentList
-    
-    # Tạo completed task
-    completed_task = CompletedTask(task, project.name)
-    
-    # Ensure completed_tasks exists
-    if not hasattr(user, 'completed_tasks'):
-        user.completed_tasks = PersistentList()
-        
-    user.completed_tasks.append(completed_task)
-    
-    # Xóa task khỏi project
-    if task in project.tasks:
-        project.tasks.remove(task)
-
 # Trong method __init__ của MainWindow, thêm sau dòng connect_to_database():
 
 def __init__(self):
@@ -285,6 +305,8 @@ def __init__(self):
     
     # In cấu hình nếu debug mode
     if DEBUG:
+        # Either import print_config or use a simple print statement
+        from config.settings import print_config  # Import if defined in settings
         print_config()
         
     self.init_ui()

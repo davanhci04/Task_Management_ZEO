@@ -1,23 +1,23 @@
 from PyQt5.QtWidgets import (QMainWindow, QVBoxLayout, QHBoxLayout, 
                            QWidget, QPushButton, QLabel, QMenuBar, 
                            QAction, QMessageBox, QTreeWidget, QTreeWidgetItem,
-                           QStackedWidget)
+                           QStackedWidget, QHeaderView)
 from PyQt5.QtCore import Qt, QTimer
 from .login_dialog import LoginDialog
 from .register_dialog import RegisterDialog
 from .project_dialog import ProjectDialog
 from .task_dialog import TaskDialog
 from database.connection import db_connection
-from database.models import User, Project, Task, CompletedTask
+from database.models import User, Project, Task
 import transaction
 from PyQt5.QtGui import QColor
 from persistent.list import PersistentList
 from .edit_task_dialog import EditTaskDialog
-from .completed_tasks_dialog import CompletedTasksDialog
 from config.settings import DATABASE_CONFIG, NETWORK_CONFIG, DEBUG, print_config
 from utils.migration import DataMigration
 
 class MainWindow(QMainWindow):
+    
     def __init__(self):
         super().__init__()
         self.current_user = None
@@ -180,42 +180,30 @@ class MainWindow(QMainWindow):
         self.stacked_widget.addWidget(main_widget)
         
     def create_menu_bar(self):
+        """Tạo menu bar"""
         menubar = self.menuBar()
         
         # File menu
         file_menu = menubar.addMenu('File')
         
+        new_project_action = QAction('New Project', self)
+        new_project_action.triggered.connect(self.create_new_project)
+        file_menu.addAction(new_project_action)
+        
+        new_task_action = QAction('New Task', self)
+        new_task_action.triggered.connect(self.create_new_task)
+        file_menu.addAction(new_task_action)
+        
+        file_menu.addSeparator()
+        
         logout_action = QAction('Logout', self)
         logout_action.triggered.connect(self.logout)
         file_menu.addAction(logout_action)
         
-        file_menu.addSeparator()
-        
         exit_action = QAction('Exit', self)
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
-        
-        # Projects menu
-        projects_menu = menubar.addMenu('Projects')
-        
-        new_project_action = QAction('New Project', self)
-        new_project_action.triggered.connect(self.create_new_project)
-        projects_menu.addAction(new_project_action)
-        
-        # Tasks menu
-        tasks_menu = menubar.addMenu('Tasks')
-        
-        new_task_action = QAction('New Task', self)
-        new_task_action.triggered.connect(self.create_new_task)
-        tasks_menu.addAction(new_task_action)
-        
-        # View menu
-        view_menu = menubar.addMenu('View')
-        
-        completed_tasks_action = QAction('Show Completed Tasks', self)
-        completed_tasks_action.triggered.connect(self.show_completed_tasks)
-        view_menu.addAction(completed_tasks_action)
-        
+    
     def create_toolbar(self):
         toolbar = self.addToolBar('Main')
         
@@ -234,7 +222,6 @@ class MainWindow(QMainWindow):
         
         # Completed Tasks button
         completed_btn = QPushButton("✅ Completed")
-        completed_btn.clicked.connect(self.show_completed_tasks)
         completed_btn.setToolTip("View completed tasks")
         toolbar.addWidget(completed_btn)
         
@@ -536,13 +523,9 @@ class MainWindow(QMainWindow):
             self.edit_task_legacy(project, task)
 
     def edit_task_by_ids(self, project_id, task_id):
-        """Edit task bằng IDs (preferred method)"""
+        """Edit task bằng IDs (preferred method) - BỎ COMPLETED LOGIC"""
         if not self.current_user:
             return
-            
-        # Ensure completed_tasks exists
-        if not hasattr(self.current_user, 'completed_tasks'):
-            self.current_user.completed_tasks = PersistentList()
             
         # Tìm project và task bằng ID
         project = self.current_user.get_project_by_id(project_id)
@@ -562,7 +545,6 @@ class MainWindow(QMainWindow):
         if result == EditTaskDialog.Accepted:
             # Update task
             task_data = dialog.get_task_data()
-            old_status = task.status
             
             # Invalidate cache trước khi update
             db_connection.invalidate_cache()
@@ -581,9 +563,9 @@ class MainWindow(QMainWindow):
                 current_task.status = task_data['status']
                 current_task.deadline = task_data['deadline']
                 
-                # Nếu status chuyển thành "Done", di chuyển task
-                if old_status != "Done" and task_data['status'] == "Done":
-                    self.move_task_to_completed(current_project, current_task, current_user)
+                # BỎ LOGIC MOVE TO COMPLETED - Task Done vẫn ở trong project
+                # if old_status != "Done" and task_data['status'] == "Done":
+                #     self.move_task_to_completed(current_project, current_task, current_user)
             
             transaction.commit()
             self.current_user = current_user
@@ -592,139 +574,9 @@ class MainWindow(QMainWindow):
             
         elif result == 2:  # Delete task
             self.delete_task_by_id(project_id, task_id)
-
-    def delete_task_by_id(self, project_id, task_id):
-        """Xóa task bằng IDs"""
-        # Invalidate cache trước khi delete
-        db_connection.invalidate_cache()
-        
-        # Lấy lại user mới nhất từ server
-        root = db_connection.get_root()
-        current_user = root['users'][self.current_user.username]
-        
-        # Tìm project và task bằng ID
-        project = current_user.get_project_by_id(project_id)
-        if project:
-            task = project.get_task_by_id(task_id)
-            if task:
-                project.remove_task(task)
-                transaction.commit()
-                self.current_user = current_user
-                self.refresh_tree()
-                QMessageBox.information(self, "Success", "Task deleted successfully!")
-                return
-        
-        QMessageBox.warning(self, "Error", "Task not found!")
-
-    def show_completed_tasks(self):
-        """Hiển thị danh sách tasks đã hoàn thành"""
-        if not self.current_user:
-            QMessageBox.warning(self, "Warning", "Please login first!")
-            return
-        
-        # Ensure completed_tasks exists
-        if not hasattr(self.current_user, 'completed_tasks'):
-            self.current_user.completed_tasks = PersistentList()
-            transaction.commit()
-        
-        dialog = CompletedTasksDialog(self.current_user.completed_tasks, self)
-        result = dialog.exec_()
-        
-        # Refresh nếu có thay đổi
-        if result == CompletedTasksDialog.Accepted:
-            transaction.commit()
-            
-    def refresh_tree(self):
-        """Refresh tree widget với enhanced display names"""
-        self.tree_widget.clear()
-        
-        if self.current_user and self.current_user.projects:
-            for project in self.current_user.projects:
-                project_item = QTreeWidgetItem(self.tree_widget)
-                
-                # Hiển thị tên project với thống kê
-                if hasattr(project, 'get_display_name'):
-                    display_name = project.get_display_name()
-                else:
-                    total_tasks = len(project.tasks)
-                    completed_tasks = sum(1 for task in project.tasks if task.status == "Done")
-                    display_name = f"{project.name} ({completed_tasks}/{total_tasks})"
-                
-                project_item.setText(0, display_name)
-                project_item.setText(1, "Active")
-                
-                # LƯU PROJECT ID VÀO DATA của item
-                if hasattr(project, 'id'):
-                    project_item.setData(0, Qt.UserRole, project.id)
-                    project_item.setToolTip(0, f"Project: {project.name}\nID: {project.id}\nCreated: {project.created_at.strftime('%Y-%m-%d')}")
-                else:
-                    project_item.setData(0, Qt.UserRole, project.name)
-                    project_item.setToolTip(0, f"Project: {project.name}\nCreated: {project.created_at.strftime('%Y-%m-%d')}")
-                
-                # Đếm tasks theo status
-                todo_count = sum(1 for task in project.tasks if task.status == "To Do")
-                doing_count = sum(1 for task in project.tasks if task.status == "Doing") 
-                done_count = sum(1 for task in project.tasks if task.status == "Done")
-                
-                project_item.setText(2, f"Tasks: {len(project.tasks)} (Todo: {todo_count}, Doing: {doing_count}, Done: {done_count})")
-                
-                for task in project.tasks:
-                    task_item = QTreeWidgetItem(project_item)
-                    
-                    # Hiển thị tên task với icon
-                    if hasattr(task, 'get_display_name'):
-                        display_name = task.get_display_name()
-                    else:
-                        status_icon = {"To Do": "📋", "Doing": "⚡", "Done": "✅"}
-                        icon = status_icon.get(task.status, "📋")
-                        display_name = f"{icon} {task.title}"
-                    
-                    task_item.setText(0, display_name)
-                    task_item.setText(1, task.status)
-                    task_item.setText(2, task.deadline)
-                    
-                    # LƯU TASK ID VÀO DATA của item
-                    if hasattr(task, 'id'):
-                        task_item.setData(0, Qt.UserRole, task.id)
-                        task_item.setToolTip(0, f"Task: {task.title}\nID: {task.id}\nCreated: {task.created_at.strftime('%Y-%m-%d')}")
-                    else:
-                        task_item.setData(0, Qt.UserRole, task.title)
-                        task_item.setToolTip(0, f"Task: {task.title}\nCreated: {task.created_at.strftime('%Y-%m-%d')}")
-                    
-                    # Màu sắc theo status
-                    if task.status == "Done":
-                        for col in range(3):
-                            task_item.setBackground(col, QColor(200, 255, 200))
-                    elif task.status == "Doing":
-                        for col in range(3):
-                            task_item.setBackground(col, QColor(255, 255, 200))
-                    else:  # To Do
-                        for col in range(3):
-                            task_item.setBackground(col, QColor(255, 230, 230))
-                        
-            self.tree_widget.expandAll()
-        else:
-            # Hiển thị thông báo nếu chưa có projects
-            info_item = QTreeWidgetItem(self.tree_widget)
-            info_item.setText(0, "No projects yet. Create your first project!")
-            info_item.setText(1, "")
-            info_item.setText(2, "Use 'New Project' button to get started")
-            for col in range(3):
-                info_item.setBackground(col, QColor(240, 240, 240))
     
-    def closeEvent(self, event):
-        """Xử lý khi đóng ứng dụng"""
-        if self.refresh_timer:
-            self.refresh_timer.stop()
-        db_connection.close()
-        event.accept()
-
     def edit_task_legacy(self, project, task):
-        """Edit task cho dữ liệu legacy không có ID"""
-        # Ensure completed_tasks exists
-        if not hasattr(self.current_user, 'completed_tasks'):
-            self.current_user.completed_tasks = PersistentList()
-        
+        """Edit task cho dữ liệu legacy không có ID - BỎ COMPLETED LOGIC"""
         # Hiển thị edit dialog
         dialog = EditTaskDialog(task, self)
         result = dialog.exec_()
@@ -732,7 +584,6 @@ class MainWindow(QMainWindow):
         if result == EditTaskDialog.Accepted:
             # Update task
             task_data = dialog.get_task_data()
-            old_status = task.status
             
             # Invalidate cache trước khi update
             db_connection.invalidate_cache()
@@ -761,9 +612,9 @@ class MainWindow(QMainWindow):
                     current_task.status = task_data['status']
                     current_task.deadline = task_data['deadline']
                     
-                    # Nếu status chuyển thành "Done", di chuyển task
-                    if old_status != "Done" and task_data['status'] == "Done":
-                        self.move_task_to_completed(current_project, current_task, current_user)
+                    # BỎ LOGIC MOVE TO COMPLETED
+                    # if old_status != "Done" and task_data['status'] == "Done":
+                    #     self.move_task_to_completed(current_project, current_task, current_user)
             
             transaction.commit()
             self.current_user = current_user
@@ -772,29 +623,166 @@ class MainWindow(QMainWindow):
             
         elif result == 2:  # Delete task
             self.delete_task_legacy(project, task)
+    
+    def refresh_tree(self):
+        """Refresh tree widget với enhanced display names và PROJECT COLORING"""
+        self.tree_widget.clear()
+        
+        if self.current_user and self.current_user.projects:
+            for project in self.current_user.projects:
+                project_item = QTreeWidgetItem(self.tree_widget)
+                
+                # Hiển thị tên project với thống kê (có ✅ nếu fully completed)
+                if hasattr(project, 'get_display_name'):
+                    display_name = project.get_display_name()
+                else:
+                    total_tasks = len(project.tasks)
+                    completed_tasks = sum(1 for task in project.tasks if task.status == "Done")
+                    
+                    if project.is_fully_completed() if hasattr(project, 'is_fully_completed') else (total_tasks > 0 and completed_tasks == total_tasks):
+                        display_name = f"✅ {project.name} ({completed_tasks}/{total_tasks})"
+                    else:
+                        display_name = f"{project.name} ({completed_tasks}/{total_tasks})"
+                
+                project_item.setText(0, display_name)
+                project_item.setText(1, "Active")
+                
+                # LƯU PROJECT ID VÀO DATA của item
+                if hasattr(project, 'id'):
+                    project_item.setData(0, Qt.UserRole, project.id)
+                    project_item.setToolTip(0, f"Project: {project.name}\nID: {project.id}\nCreated: {project.created_at.strftime('%Y-%m-%d')}")
+                else:
+                    project_item.setData(0, Qt.UserRole, project.name)
+                    project_item.setToolTip(0, f"Project: {project.name}\nCreated: {project.created_at.strftime('%Y-%m-%d')}")
+                
+                # 🎨 LOGIC MỚI: PROJECT COLORING
+                # Kiểm tra xem tất cả tasks đã done chưa
+                is_project_completed = False
+                if hasattr(project, 'is_fully_completed'):
+                    is_project_completed = project.is_fully_completed()
+                else:
+                    # Fallback logic
+                    total_tasks = len(project.tasks)
+                    completed_tasks = sum(1 for task in project.tasks if task.status == "Done")
+                    is_project_completed = total_tasks > 0 and completed_tasks == total_tasks
+                
+                # Màu sắc cho project
+                if is_project_completed:
+                    # Project hoàn thành - màu xanh
+                    for col in range(3):
+                        project_item.setBackground(col, QColor(144, 238, 144))  # Light green
+                else:
+                    # Project chưa hoàn thành - màu mặc định
+                    for col in range(3):
+                        project_item.setBackground(col, QColor(245, 245, 245))  # Light gray
+                
+                # Đếm tasks theo status
+                todo_count = sum(1 for task in project.tasks if task.status == "To Do")
+                doing_count = sum(1 for task in project.tasks if task.status == "Doing") 
+                done_count = sum(1 for task in project.tasks if task.status == "Done")
+                
+                project_item.setText(2, f"Tasks: {len(project.tasks)} (Todo: {todo_count}, Doing: {doing_count}, Done: {done_count})")
+                
+                # HIỂN THỊ TẤT CẢ TASKS (bao gồm Done)
+                for task in project.tasks:
+                    task_item = QTreeWidgetItem(project_item)
+                    
+                    # Hiển thị tên task với icon
+                    if hasattr(task, 'get_display_name'):
+                        display_name = task.get_display_name()
+                    else:
+                        status_icon = {"To Do": "📋", "Doing": "⚡", "Done": "✅"}
+                        icon = status_icon.get(task.status, "📋")
+                        display_name = f"{icon} {task.title}"
+                    
+                    task_item.setText(0, display_name)
+                    task_item.setText(1, task.status)
+                    task_item.setText(2, task.deadline)
+                    
+                    # LƯU TASK ID VÀO DATA của item
+                    if hasattr(task, 'id'):
+                        task_item.setData(0, Qt.UserRole, task.id)
+                        task_item.setToolTip(0, f"Task: {task.title}\nID: {task.id}\nCreated: {task.created_at.strftime('%Y-%m-%d')}")
+                    else:
+                        task_item.setData(0, Qt.UserRole, task.title)
+                        task_item.setToolTip(0, f"Task: {task.title}\nCreated: {task.created_at.strftime('%Y-%m-%d')}")
+                    
+                    # Màu sắc theo status
+                    if task.status == "Done":
+                        for col in range(3):
+                            task_item.setBackground(col, QColor(200, 255, 200))  # Green for completed tasks
+                    elif task.status == "Doing":
+                        for col in range(3):
+                            task_item.setBackground(col, QColor(255, 255, 200))  # Yellow for in-progress
+                    else:  # To Do
+                        for col in range(3):
+                            task_item.setBackground(col, QColor(255, 230, 230))  # Light red for pending
+                    
+            self.tree_widget.expandAll()
+        else:
+            # Hiển thị thông báo nếu chưa có projects
+            info_item = QTreeWidgetItem(self.tree_widget)
+            info_item.setText(0, "No projects yet. Create your first project!")
+            info_item.setText(1, "")
+            info_item.setText(2, "Use 'New Project' button to get started")
+            for col in range(3):
+                info_item.setBackground(col, QColor(240, 240, 240))
+    
+    def closeEvent(self, event):
+        """Xử lý khi đóng ứng dụng"""
+        if self.refresh_timer:
+            self.refresh_timer.stop()
+        db_connection.close()
+        event.accept()
 
-    def delete_task_legacy(self, project, task):
-        """Xóa task cho dữ liệu legacy"""
-        # Invalidate cache trước khi delete
-        db_connection.invalidate_cache()
+    def edit_task_legacy(self, project, task):
+        """Edit task cho dữ liệu legacy không có ID - BỎ COMPLETED LOGIC"""
+        # Hiển thị edit dialog
+        dialog = EditTaskDialog(task, self)
+        result = dialog.exec_()
         
-        # Lấy lại user mới nhất từ server
-        root = db_connection.get_root()
-        current_user = root['users'][self.current_user.username]
-        
-        # Tìm project và task bằng name
-        for p in current_user.projects:
-            if p.name == project.name:
-                for t in list(p.tasks):  # Tạo copy để tránh modification during iteration
+        if result == EditTaskDialog.Accepted:
+            # Update task
+            task_data = dialog.get_task_data()
+            
+            # Invalidate cache trước khi update
+            db_connection.invalidate_cache()
+            
+            # Lấy lại user mới nhất từ server
+            root = db_connection.get_root()
+            current_user = root['users'][self.current_user.username]
+            
+            # Tìm lại project và task bằng name
+            current_project = None
+            for p in current_user.projects:
+                if p.name == project.name:
+                    current_project = p
+                    break
+            
+            if current_project:
+                current_task = None
+                for t in current_project.tasks:
                     if t.title == task.title and t.created_at == task.created_at:
-                        p.tasks.remove(t)
+                        current_task = t
                         break
-                break
-        
-        transaction.commit()
-        self.current_user = current_user
-        self.refresh_tree()
-        QMessageBox.information(self, "Success", "Task deleted successfully!")
+                
+                if current_task:
+                    current_task.title = task_data['title']
+                    current_task.description = task_data['description']
+                    current_task.status = task_data['status']
+                    current_task.deadline = task_data['deadline']
+                    
+                    # BỎ LOGIC MOVE TO COMPLETED
+                    # if old_status != "Done" and task_data['status'] == "Done":
+                    #     self.move_task_to_completed(current_project, current_task, current_user)
+            
+            transaction.commit()
+            self.current_user = current_user
+            self.refresh_tree()
+            QMessageBox.information(self, "Success", "Task updated successfully!")
+            
+        elif result == 2:  # Delete task
+            self.delete_task_legacy(project, task)
 
     def edit_task_by_identifiers(self, project_identifier, task_identifier):
         """Edit task bằng identifiers (ID hoặc name)"""
@@ -836,18 +824,3 @@ class MainWindow(QMainWindow):
             self.edit_task_by_ids(project.id, task.id)
         else:
             self.edit_task_legacy(project, task)
-
-    def move_task_to_completed(self, project, task, user):
-        """Di chuyển task đã hoàn thành sang danh sách completed"""
-        # Tạo completed task
-        completed_task = CompletedTask(task, project.name)
-        
-        # Ensure completed_tasks exists
-        if not hasattr(user, 'completed_tasks'):
-            user.completed_tasks = PersistentList()
-            
-        user.completed_tasks.append(completed_task)
-        
-        # Xóa task khỏi project
-        if task in project.tasks:
-            project.tasks.remove(task)
