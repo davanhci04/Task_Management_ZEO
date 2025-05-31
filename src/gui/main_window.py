@@ -14,7 +14,7 @@ from PyQt5.QtGui import QColor
 from persistent.list import PersistentList
 from .edit_task_dialog import EditTaskDialog
 from .completed_tasks_dialog import CompletedTasksDialog
-from config.settings import NETWORK_CONFIG, DEBUG, print_config
+from config.settings import DATABASE_CONFIG, NETWORK_CONFIG, DEBUG, print_config
 
 class MainWindow(QMainWindow):
     def __init__(self):
