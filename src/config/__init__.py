@@ -1,1 +1,1 @@
-# This file is intentionally left blank.
+# Empty file to make config a package

@@ -14,36 +14,58 @@ from PyQt5.QtGui import QColor
 from persistent.list import PersistentList
 from .edit_task_dialog import EditTaskDialog
 from .completed_tasks_dialog import CompletedTasksDialog
+from config.settings import NETWORK_CONFIG, DEBUG, print_config
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.current_user = None
         self.refresh_timer = None
+        
+        # In cấu hình nếu debug mode
+        if DEBUG:
+            print_config()
+            
         self.init_ui()
         self.connect_to_database()
         
-        # Bắt đầu auto-refresh ngay khi khởi tạo
+        # Bắt đầu auto-refresh với interval từ config
         self.start_auto_refresh()
         
         # Hiển thị login dialog ngay khi khởi động
         self.show_login_at_startup()
         
     def connect_to_database(self):
-        """Kết nối tới database"""
+        """Kết nối tới database với config từ .env"""
+        if DEBUG:
+            print("🔌 Attempting to connect to database...")
+            
         if not db_connection.connect():
             QMessageBox.critical(self, "Database Error", 
-                               "Cannot connect to ZEO server. Please make sure ZEO server is running.")
+                               f"Cannot connect to ZEO server at {DATABASE_CONFIG['host']}:{DATABASE_CONFIG['port']}\n\n"
+                               "Please check:\n"
+                               "1. ZEO server is running\n"
+                               "2. Server address is correct\n"
+                               "3. Firewall settings\n"
+                               "4. Network connectivity")
             self.close()
+        else:
+            # Test connection
+            db_connection.test_connection()
     
     def start_auto_refresh(self):
-        """Bắt đầu auto-refresh mỗi 3 giây (luôn chạy)"""
+        """Bắt đầu auto-refresh với interval từ config"""
         if self.refresh_timer:
             self.refresh_timer.stop()
             
+        refresh_interval = NETWORK_CONFIG['auto_refresh_interval']
+        
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self.auto_refresh_data)
-        self.refresh_timer.start(3000)  # Refresh mỗi 3 giây
+        self.refresh_timer.start(refresh_interval)
+        
+        if DEBUG:
+            print(f"🔄 Auto-refresh started with {refresh_interval}ms interval")
     
     def auto_refresh_data(self):
         """Tự động refresh dữ liệu từ server"""
