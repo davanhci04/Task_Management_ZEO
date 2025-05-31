@@ -15,6 +15,7 @@ from persistent.list import PersistentList
 from .edit_task_dialog import EditTaskDialog
 from .completed_tasks_dialog import CompletedTasksDialog
 from config.settings import DATABASE_CONFIG, NETWORK_CONFIG, DEBUG, print_config
+from utils.migration import DataMigration
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -29,12 +30,15 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.connect_to_database()
         
+        # Chạy migration nếu cần
+        self.run_migration_if_needed()
+        
         # Bắt đầu auto-refresh với interval từ config
         self.start_auto_refresh()
         
         # Hiển thị login dialog ngay khi khởi động
         self.show_login_at_startup()
-        
+    
     def connect_to_database(self):
         """Kết nối tới database với config từ .env"""
         if DEBUG:
@@ -332,6 +336,33 @@ class MainWindow(QMainWindow):
         self.tree_widget.clear()
         self.stacked_widget.setCurrentIndex(0)  # Chuyển về login screen
         
+    def run_migration_if_needed(self):
+        """Chạy migration cho dữ liệu cũ"""
+        try:
+            if DEBUG:
+                print("🔍 Checking for migration needs...")
+            
+            # Kiểm tra xem có dữ liệu cũ không
+            root = db_connection.get_root()
+            users = root.get('users', {})
+            
+            needs_migration = False
+            for user in users.values():
+                for project in user.projects:
+                    if not hasattr(project, 'id'):
+                        needs_migration = True
+                        break
+                if needs_migration:
+                    break
+            
+            if needs_migration:
+                print("📦 Running data migration...")
+                DataMigration.migrate_to_uuid()
+                DataMigration.validate_data_integrity()
+            
+        except Exception as e:
+            print(f"❌ Migration error: {e}")
+
     def create_new_project(self):
         if not self.current_user:
             QMessageBox.warning(self, "Warning", "Please login first!")
@@ -342,6 +373,14 @@ class MainWindow(QMainWindow):
             project_name = dialog.get_project_name()
             project_description = dialog.get_project_description()
             
+            # Kiểm tra tên project trùng
+            if not self.current_user.validate_project_name(project_name):
+                reply = QMessageBox.question(self, "Duplicate Name", 
+                    f"Project name '{project_name}' already exists. Do you want to create it anyway?",
+                    QMessageBox.Yes | QMessageBox.No)
+                if reply == QMessageBox.No:
+                    return
+            
             # Invalidate cache trước khi thêm
             db_connection.invalidate_cache()
             
@@ -349,8 +388,9 @@ class MainWindow(QMainWindow):
             root = db_connection.get_root()
             current_user = root['users'][self.current_user.username]
             
-            # Tạo project mới
+            # Tạo project mới với UUID
             new_project = Project(project_name, project_description)
+            new_project.owner_username = current_user.username
             current_user.projects.append(new_project)
             transaction.commit()
             
@@ -358,8 +398,9 @@ class MainWindow(QMainWindow):
             self.current_user = current_user
             
             self.refresh_tree()
-            QMessageBox.information(self, "Success", f"Project '{project_name}' created!")
-            
+            QMessageBox.information(self, "Success", 
+                f"Project '{project_name}' created!\nProject ID: {new_project.id[:8]}...")
+
     def create_new_task(self):
         if not self.current_user:
             QMessageBox.warning(self, "Warning", "Please login first!")
@@ -374,6 +415,17 @@ class MainWindow(QMainWindow):
             task_data = dialog.get_task_data()
             project_index = dialog.get_selected_project_index()
             
+            # Lấy project được chọn
+            selected_project = self.current_user.projects[project_index]
+            
+            # Kiểm tra tên task trùng
+            if not selected_project.validate_task_title(task_data['title']):
+                reply = QMessageBox.question(self, "Duplicate Title", 
+                    f"Task title '{task_data['title']}' already exists in this project. Do you want to create it anyway?",
+                    QMessageBox.Yes | QMessageBox.No)
+                if reply == QMessageBox.No:
+                    return
+            
             # Invalidate cache trước khi thêm
             db_connection.invalidate_cache()
             
@@ -381,13 +433,14 @@ class MainWindow(QMainWindow):
             root = db_connection.get_root()
             current_user = root['users'][self.current_user.username]
             
-            # Tạo task mới
+            # Tạo task mới với UUID
             new_task = Task(
                 task_data['title'],
                 task_data['description'],
                 task_data['deadline'],
                 task_data['status']
             )
+            new_task.project_id = current_user.projects[project_index].id
             
             current_user.projects[project_index].tasks.append(new_task)
             transaction.commit()
@@ -396,21 +449,94 @@ class MainWindow(QMainWindow):
             self.current_user = current_user
             
             self.refresh_tree()
-            QMessageBox.information(self, "Success", f"Task '{task_data['title']}' created!")
-            
+            QMessageBox.information(self, "Success", 
+                f"Task '{task_data['title']}' created!\nTask ID: {new_task.id[:8]}...")
+
     def on_item_double_clicked(self, item, column):
         """Xử lý khi double click trên item"""
         if item.parent() is None:  # Project item
-            project_name = item.text(0)
-            print(f"Double clicked on project: {project_name}")
+            # Lấy project identifier từ data hoặc text
+            project_identifier = item.data(0, Qt.UserRole)
+            if not project_identifier:
+                # Fallback: extract từ display text
+                project_text = item.text(0)
+                project_identifier = project_text.split(' (')[0] if ' (' in project_text else project_text
+        
+            if project_identifier and self.current_user:
+                # Tìm project
+                if hasattr(self.current_user, 'get_project_by_id'):
+                    project = self.current_user.get_project_by_id(project_identifier)
+                    if not project:
+                        clean_name = project_identifier.split(' (')[0] if ' (' in project_identifier else project_identifier
+                        project = self.current_user.get_project_by_name(clean_name)
+                else:
+                    clean_name = project_identifier.split(' (')[0] if ' (' in project_identifier else project_identifier
+                    project = self.current_user.get_project_by_name(clean_name)
+            
+                if project:
+                    if hasattr(project, 'id'):
+                        print(f"Double clicked on project: {project.name} (ID: {project.id[:8]})")
+                    else:
+                        print(f"Double clicked on project: {project.name}")
         else:  # Task item
+            # Lấy identifiers từ data hoặc text
             project_item = item.parent()
-            project_name = project_item.text(0)
-            task_title = item.text(0)
-            self.edit_task(project_name, task_title)
+            project_identifier = project_item.data(0, Qt.UserRole)
+            task_identifier = item.data(0, Qt.UserRole)
+        
+            if not project_identifier:
+                project_text = project_item.text(0)
+                project_identifier = project_text.split(' (')[0] if ' (' in project_text else project_text
+        
+            if not task_identifier:
+                task_text = item.text(0)
+                task_identifier = task_text.split(' ', 1)[1] if task_text.startswith(('📋', '⚡', '✅')) else task_text
+        
+            if project_identifier and task_identifier:
+                self.edit_task_by_identifiers(project_identifier, task_identifier)
 
-    def edit_task(self, project_name, task_title):
-        """Edit task"""
+    def edit_task_by_names(self, project_name, task_title):
+        """Edit task bằng project name và task title (backward compatibility)"""
+        if not self.current_user:
+            return
+    
+        # Clean project name (remove stats if present)
+        clean_project_name = project_name.split(' (')[0] if ' (' in project_name else project_name
+    
+        # Clean task title (remove icon if present)
+        clean_task_title = task_title.split(' ', 1)[1] if task_title.startswith(('📋', '⚡', '✅')) else task_title
+    
+        # Tìm project
+        project = None
+        for p in self.current_user.projects:
+            if p.name == clean_project_name:
+                project = p
+                break
+    
+        if not project:
+            QMessageBox.warning(self, "Error", f"Project '{clean_project_name}' not found!")
+            return
+    
+        # Tìm task
+        task = None
+        for t in project.tasks:
+            if t.title == clean_task_title:
+                task = t
+                break
+    
+        if not task:
+            QMessageBox.warning(self, "Error", f"Task '{clean_task_title}' not found!")
+            return
+    
+        # Sử dụng ID nếu có
+        if hasattr(project, 'id') and hasattr(task, 'id'):
+            self.edit_task_by_ids(project.id, task.id)
+        else:
+            # Legacy support
+            self.edit_task_legacy(project, task)
+
+    def edit_task_by_ids(self, project_id, task_id):
+        """Edit task bằng IDs (preferred method)"""
         if not self.current_user:
             return
             
@@ -418,16 +544,13 @@ class MainWindow(QMainWindow):
         if not hasattr(self.current_user, 'completed_tasks'):
             self.current_user.completed_tasks = PersistentList()
             
-        # Tìm project và task
-        project = None
-        task = None
-        
-        for p in self.current_user.projects:
-            if p.name == project_name:
-                project = p
-                task = p.get_task_by_title(task_title)
-                break
-        
+        # Tìm project và task bằng ID
+        project = self.current_user.get_project_by_id(project_id)
+        if not project:
+            QMessageBox.warning(self, "Error", "Project not found!")
+            return
+            
+        task = project.get_task_by_id(task_id)
         if not task:
             QMessageBox.warning(self, "Error", "Task not found!")
             return
@@ -448,21 +571,19 @@ class MainWindow(QMainWindow):
             root = db_connection.get_root()
             current_user = root['users'][self.current_user.username]
             
-            # Tìm lại project và task từ user mới
-            for p in current_user.projects:
-                if p.name == project_name:
-                    current_task = p.get_task_by_title(task_title)
-                    if current_task:
-                        current_task.title = task_data['title']
-                        current_task.description = task_data['description']
-                        current_task.status = task_data['status']
-                        current_task.deadline = task_data['deadline']
-                        
-                        # Nếu status chuyển thành "Done", di chuyển task
-                        if old_status != "Done" and task_data['status'] == "Done":
-                            self.move_task_to_completed(p, current_task, current_user)
-                        
-                        break
+            # Tìm lại project và task bằng ID
+            current_project = current_user.get_project_by_id(project_id)
+            current_task = current_project.get_task_by_id(task_id) if current_project else None
+            
+            if current_task:
+                current_task.title = task_data['title']
+                current_task.description = task_data['description']
+                current_task.status = task_data['status']
+                current_task.deadline = task_data['deadline']
+                
+                # Nếu status chuyển thành "Done", di chuyển task
+                if old_status != "Done" and task_data['status'] == "Done":
+                    self.move_task_to_completed(current_project, current_task, current_user)
             
             transaction.commit()
             self.current_user = current_user
@@ -470,24 +591,10 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Success", "Task updated successfully!")
             
         elif result == 2:  # Delete task
-            self.delete_task(project, task)
+            self.delete_task_by_id(project_id, task_id)
 
-    def move_task_to_completed(self, project, task, user):
-        """Di chuyển task đã hoàn thành sang danh sách completed"""
-        # Tạo completed task
-        completed_task = CompletedTask(task, project.name)
-        
-        # Ensure completed_tasks exists
-        if not hasattr(user, 'completed_tasks'):
-            user.completed_tasks = PersistentList()
-            
-        user.completed_tasks.append(completed_task)
-        
-        # Xóa task khỏi project
-        project.remove_task(task)
-
-    def delete_task(self, project, task):
-        """Xóa task"""
+    def delete_task_by_id(self, project_id, task_id):
+        """Xóa task bằng IDs"""
         # Invalidate cache trước khi delete
         db_connection.invalidate_cache()
         
@@ -495,18 +602,19 @@ class MainWindow(QMainWindow):
         root = db_connection.get_root()
         current_user = root['users'][self.current_user.username]
         
-        # Tìm lại project và xóa task
-        for p in current_user.projects:
-            if p.name == project.name:
-                current_task = p.get_task_by_title(task.title)
-                if current_task:
-                    p.remove_task(current_task)
-                break
+        # Tìm project và task bằng ID
+        project = current_user.get_project_by_id(project_id)
+        if project:
+            task = project.get_task_by_id(task_id)
+            if task:
+                project.remove_task(task)
+                transaction.commit()
+                self.current_user = current_user
+                self.refresh_tree()
+                QMessageBox.information(self, "Success", "Task deleted successfully!")
+                return
         
-        transaction.commit()
-        self.current_user = current_user
-        self.refresh_tree()
-        QMessageBox.information(self, "Success", "Task deleted successfully!")
+        QMessageBox.warning(self, "Error", "Task not found!")
 
     def show_completed_tasks(self):
         """Hiển thị danh sách tasks đã hoàn thành"""
@@ -527,14 +635,31 @@ class MainWindow(QMainWindow):
             transaction.commit()
             
     def refresh_tree(self):
-        """Refresh tree widget với data từ database"""
+        """Refresh tree widget với enhanced display names"""
         self.tree_widget.clear()
         
         if self.current_user and self.current_user.projects:
             for project in self.current_user.projects:
                 project_item = QTreeWidgetItem(self.tree_widget)
-                project_item.setText(0, project.name)
+                
+                # Hiển thị tên project với thống kê
+                if hasattr(project, 'get_display_name'):
+                    display_name = project.get_display_name()
+                else:
+                    total_tasks = len(project.tasks)
+                    completed_tasks = sum(1 for task in project.tasks if task.status == "Done")
+                    display_name = f"{project.name} ({completed_tasks}/{total_tasks})"
+                
+                project_item.setText(0, display_name)
                 project_item.setText(1, "Active")
+                
+                # LƯU PROJECT ID VÀO DATA của item
+                if hasattr(project, 'id'):
+                    project_item.setData(0, Qt.UserRole, project.id)
+                    project_item.setToolTip(0, f"Project: {project.name}\nID: {project.id}\nCreated: {project.created_at.strftime('%Y-%m-%d')}")
+                else:
+                    project_item.setData(0, Qt.UserRole, project.name)
+                    project_item.setToolTip(0, f"Project: {project.name}\nCreated: {project.created_at.strftime('%Y-%m-%d')}")
                 
                 # Đếm tasks theo status
                 todo_count = sum(1 for task in project.tasks if task.status == "To Do")
@@ -545,23 +670,37 @@ class MainWindow(QMainWindow):
                 
                 for task in project.tasks:
                     task_item = QTreeWidgetItem(project_item)
-                    task_item.setText(0, task.title)
+                    
+                    # Hiển thị tên task với icon
+                    if hasattr(task, 'get_display_name'):
+                        display_name = task.get_display_name()
+                    else:
+                        status_icon = {"To Do": "📋", "Doing": "⚡", "Done": "✅"}
+                        icon = status_icon.get(task.status, "📋")
+                        display_name = f"{icon} {task.title}"
+                    
+                    task_item.setText(0, display_name)
                     task_item.setText(1, task.status)
                     task_item.setText(2, task.deadline)
                     
+                    # LƯU TASK ID VÀO DATA của item
+                    if hasattr(task, 'id'):
+                        task_item.setData(0, Qt.UserRole, task.id)
+                        task_item.setToolTip(0, f"Task: {task.title}\nID: {task.id}\nCreated: {task.created_at.strftime('%Y-%m-%d')}")
+                    else:
+                        task_item.setData(0, Qt.UserRole, task.title)
+                        task_item.setToolTip(0, f"Task: {task.title}\nCreated: {task.created_at.strftime('%Y-%m-%d')}")
+                    
                     # Màu sắc theo status
                     if task.status == "Done":
-                        task_item.setBackground(0, QColor(200, 255, 200))  # Xanh lá nhạt
-                        task_item.setBackground(1, QColor(200, 255, 200))
-                        task_item.setBackground(2, QColor(200, 255, 200))
+                        for col in range(3):
+                            task_item.setBackground(col, QColor(200, 255, 200))
                     elif task.status == "Doing":
-                        task_item.setBackground(0, QColor(255, 255, 200))  # Vàng nhạt
-                        task_item.setBackground(1, QColor(255, 255, 200))
-                        task_item.setBackground(2, QColor(255, 255, 200))
+                        for col in range(3):
+                            task_item.setBackground(col, QColor(255, 255, 200))
                     else:  # To Do
-                        task_item.setBackground(0, QColor(255, 230, 230))  # Đỏ nhạt
-                        task_item.setBackground(1, QColor(255, 230, 230))
-                        task_item.setBackground(2, QColor(255, 230, 230))
+                        for col in range(3):
+                            task_item.setBackground(col, QColor(255, 230, 230))
                         
             self.tree_widget.expandAll()
         else:
@@ -570,9 +709,8 @@ class MainWindow(QMainWindow):
             info_item.setText(0, "No projects yet. Create your first project!")
             info_item.setText(1, "")
             info_item.setText(2, "Use 'New Project' button to get started")
-            info_item.setBackground(0, QColor(240, 240, 240))
-            info_item.setBackground(1, QColor(240, 240, 240))
-            info_item.setBackground(2, QColor(240, 240, 240))
+            for col in range(3):
+                info_item.setBackground(col, QColor(240, 240, 240))
     
     def closeEvent(self, event):
         """Xử lý khi đóng ứng dụng"""
@@ -580,3 +718,136 @@ class MainWindow(QMainWindow):
             self.refresh_timer.stop()
         db_connection.close()
         event.accept()
+
+    def edit_task_legacy(self, project, task):
+        """Edit task cho dữ liệu legacy không có ID"""
+        # Ensure completed_tasks exists
+        if not hasattr(self.current_user, 'completed_tasks'):
+            self.current_user.completed_tasks = PersistentList()
+        
+        # Hiển thị edit dialog
+        dialog = EditTaskDialog(task, self)
+        result = dialog.exec_()
+        
+        if result == EditTaskDialog.Accepted:
+            # Update task
+            task_data = dialog.get_task_data()
+            old_status = task.status
+            
+            # Invalidate cache trước khi update
+            db_connection.invalidate_cache()
+            
+            # Lấy lại user mới nhất từ server
+            root = db_connection.get_root()
+            current_user = root['users'][self.current_user.username]
+            
+            # Tìm lại project và task bằng name
+            current_project = None
+            for p in current_user.projects:
+                if p.name == project.name:
+                    current_project = p
+                    break
+            
+            if current_project:
+                current_task = None
+                for t in current_project.tasks:
+                    if t.title == task.title and t.created_at == task.created_at:
+                        current_task = t
+                        break
+                
+                if current_task:
+                    current_task.title = task_data['title']
+                    current_task.description = task_data['description']
+                    current_task.status = task_data['status']
+                    current_task.deadline = task_data['deadline']
+                    
+                    # Nếu status chuyển thành "Done", di chuyển task
+                    if old_status != "Done" and task_data['status'] == "Done":
+                        self.move_task_to_completed(current_project, current_task, current_user)
+            
+            transaction.commit()
+            self.current_user = current_user
+            self.refresh_tree()
+            QMessageBox.information(self, "Success", "Task updated successfully!")
+            
+        elif result == 2:  # Delete task
+            self.delete_task_legacy(project, task)
+
+    def delete_task_legacy(self, project, task):
+        """Xóa task cho dữ liệu legacy"""
+        # Invalidate cache trước khi delete
+        db_connection.invalidate_cache()
+        
+        # Lấy lại user mới nhất từ server
+        root = db_connection.get_root()
+        current_user = root['users'][self.current_user.username]
+        
+        # Tìm project và task bằng name
+        for p in current_user.projects:
+            if p.name == project.name:
+                for t in list(p.tasks):  # Tạo copy để tránh modification during iteration
+                    if t.title == task.title and t.created_at == task.created_at:
+                        p.tasks.remove(t)
+                        break
+                break
+        
+        transaction.commit()
+        self.current_user = current_user
+        self.refresh_tree()
+        QMessageBox.information(self, "Success", "Task deleted successfully!")
+
+    def edit_task_by_identifiers(self, project_identifier, task_identifier):
+        """Edit task bằng identifiers (ID hoặc name)"""
+        if not self.current_user:
+            return
+        
+        # Clean project name (remove stats if present)
+        clean_project_name = project_identifier.split(' (')[0] if ' (' in project_identifier else project_identifier
+        
+        # Clean task title (remove icon if present) 
+        clean_task_title = task_identifier.split(' ', 1)[1] if task_identifier.startswith(('📋', '⚡', '✅')) else task_identifier
+        
+        # Tìm project
+        if hasattr(self.current_user, 'get_project_by_id'):
+            project = self.current_user.get_project_by_id(project_identifier)
+            if not project:  # Fallback to name search
+                project = self.current_user.get_project_by_name(clean_project_name)
+        else:
+            project = self.current_user.get_project_by_name(clean_project_name)
+        
+        if not project:
+            QMessageBox.warning(self, "Error", f"Project '{clean_project_name}' not found!")
+            return
+        
+        # Tìm task
+        if hasattr(project, 'get_task_by_id'):
+            task = project.get_task_by_id(task_identifier)
+            if not task:  # Fallback to title search
+                task = project.get_task_by_title(clean_task_title)
+        else:
+            task = project.get_task_by_title(clean_task_title)
+        
+        if not task:
+            QMessageBox.warning(self, "Error", f"Task '{clean_task_title}' not found!")
+            return
+        
+        # Sử dụng ID nếu có, otherwise fallback to names
+        if hasattr(project, 'id') and hasattr(task, 'id'):
+            self.edit_task_by_ids(project.id, task.id)
+        else:
+            self.edit_task_legacy(project, task)
+
+    def move_task_to_completed(self, project, task, user):
+        """Di chuyển task đã hoàn thành sang danh sách completed"""
+        # Tạo completed task
+        completed_task = CompletedTask(task, project.name)
+        
+        # Ensure completed_tasks exists
+        if not hasattr(user, 'completed_tasks'):
+            user.completed_tasks = PersistentList()
+            
+        user.completed_tasks.append(completed_task)
+        
+        # Xóa task khỏi project
+        if task in project.tasks:
+            project.tasks.remove(task)
