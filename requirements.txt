@@ -1,0 +1,9 @@
+Flask==2.0.1
+PyQt5>=5.15.0
+SQLAlchemy==1.4.22
+pytest==6.2.4
+pytest-qt==3.2.0
+ZODB>=5.8.0
+ZEO>=5.4.0
+transaction>=3.0.0
+persistent>=4.9.0
