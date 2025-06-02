@@ -22,15 +22,11 @@ class CompletedTasksDialog(QDialog):
         title_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(title_label)
         
-        # Table
         self.table = QTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["Task", "Project", "Completed Date", "Description"])
-        
-        # Populate table
         self.populate_table()
         
-        # Resize columns
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
@@ -66,12 +62,10 @@ class CompletedTasksDialog(QDialog):
         for row, task in enumerate(self.completed_tasks):
             self.table.setItem(row, 0, QTableWidgetItem(task.title))
             self.table.setItem(row, 1, QTableWidgetItem(task.project_name))
-            
-            # Format completed date
+    
             completed_date = task.completed_at.strftime("%Y-%m-%d %H:%M")
             self.table.setItem(row, 2, QTableWidgetItem(completed_date))
             
-            # Truncate description if too long
             description = task.description
             if len(description) > 100:
                 description = description[:100] + "..."

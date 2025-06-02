@@ -58,7 +58,6 @@ class MainWindow(QMainWindow):
             db_connection.test_connection()
     
     def start_auto_refresh(self):
-        """Bắt đầu auto-refresh với interval từ config"""
         if self.refresh_timer:
             self.refresh_timer.stop()
             
@@ -72,7 +71,6 @@ class MainWindow(QMainWindow):
             print(f"🔄 Auto-refresh started with {refresh_interval}ms interval")
     
     def auto_refresh_data(self):
-        """Tự động refresh dữ liệu từ server"""
         if self.current_user:
             try:
                 # Invalidate cache và sync với server
@@ -274,11 +272,6 @@ class MainWindow(QMainWindow):
         
         # Separator
         toolbar.addSeparator()
-        
-        # Completed Tasks button
-        completed_btn = QPushButton("✅ Completed")
-        completed_btn.setToolTip("View completed tasks")
-        toolbar.addWidget(completed_btn)
         
         # Separator
         toolbar.addSeparator()

@@ -6,7 +6,7 @@ class LoginDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.credentials = None
-        self.should_register = False  # Flag để biết user muốn register
+        self.should_register = False  
         self.init_ui()
         
     def init_ui(self):
@@ -16,24 +16,20 @@ class LoginDialog(QDialog):
         
         layout = QVBoxLayout()
         
-        # Title
         title_label = QLabel("Login to Task Manager")
         title_label.setStyleSheet("font-size: 18px; font-weight: bold; margin: 10px;")
         title_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(title_label)
         
-        # Username
         layout.addWidget(QLabel("Username:"))
         self.username_edit = QLineEdit()
         layout.addWidget(self.username_edit)
         
-        # Password
         layout.addWidget(QLabel("Password:"))
         self.password_edit = QLineEdit()
         self.password_edit.setEchoMode(QLineEdit.Password)
         layout.addWidget(self.password_edit)
         
-        # Main buttons
         button_layout = QHBoxLayout()
         
         login_btn = QPushButton("Login")
@@ -47,13 +43,11 @@ class LoginDialog(QDialog):
         
         layout.addLayout(button_layout)
         
-        # Separator line
         separator = QLabel("─" * 50)
         separator.setAlignment(Qt.AlignCenter)
         separator.setStyleSheet("color: gray; margin: 10px;")
         layout.addWidget(separator)
         
-        # Register section
         register_label = QLabel("Don't have an account?")
         register_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(register_label)
@@ -65,7 +59,6 @@ class LoginDialog(QDialog):
         
         self.setLayout(layout)
         
-        # Set focus to username field
         self.username_edit.setFocus()
         
     def login(self):
@@ -82,7 +75,7 @@ class LoginDialog(QDialog):
     def go_to_register(self):
         """Chuyển sang register dialog"""
         self.should_register = True
-        self.reject()  # Đóng login dialog
+        self.reject() 
         
     def get_credentials(self):
         return self.credentials

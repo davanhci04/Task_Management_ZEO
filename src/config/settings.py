@@ -1,17 +1,14 @@
 import os
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv()
 
-# Database configuration
 DATABASE_CONFIG = {
     'host': os.getenv('ZEO_HOST', '127.0.0.1'),
     'port': int(os.getenv('ZEO_PORT', 8090)),
     'timeout': int(os.getenv('CONNECTION_TIMEOUT', 30))
 }
 
-# Network settings
 NETWORK_CONFIG = {
     'listen_host': os.getenv('LISTEN_HOST', '0.0.0.0'),
     'listen_port': int(os.getenv('LISTEN_PORT', 8090)),
@@ -20,7 +17,6 @@ NETWORK_CONFIG = {
     'retry_delay': int(os.getenv('RETRY_DELAY', 5))
 }
 
-# Debug settings
 DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
 
 def get_server_address():

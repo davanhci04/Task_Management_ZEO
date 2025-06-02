@@ -14,7 +14,6 @@ def create_zeo_config():
     listen_host = os.getenv('LISTEN_HOST', '0.0.0.0')
     listen_port = os.getenv('LISTEN_PORT', '8090')
     
-    # Config đơn giản hơn, loại bỏ các tùy chọn không hỗ trợ
     config_content = f"""
 <zeo>
   address {listen_host}:{listen_port}
@@ -42,7 +41,6 @@ def create_zeo_config():
 
 def start_zeo_server():
     """Khởi động ZEO server"""
-    # Tạo thư mục cần thiết
     os.makedirs('data', exist_ok=True)
     os.makedirs('logs', exist_ok=True)
     
@@ -59,7 +57,6 @@ def start_zeo_server():
     if debug:
         print("🐛 Debug mode: ON")
     
-    # Thử phương pháp đơn giản nhất trước
     try:
         print("🔄 Method 1: Direct command line...")
         import subprocess
@@ -78,7 +75,6 @@ def start_zeo_server():
         print("🔄 Method 2: Using config file...")
         
         try:
-            # Tạo config file đơn giản
             config_file = create_zeo_config()
             print(f"⚙️ Config file: {config_file}")
             
@@ -105,7 +101,6 @@ def manual_start_server(host, port):
     try:
         print("🔧 Setting up ZEO server manually...")
         
-        # Import các module cần thiết
         from ZODB.FileStorage import FileStorage
         from ZEO.StorageServer import StorageServer
         import threading
@@ -137,7 +132,6 @@ def manual_start_server(host, port):
         print("🛑 Press Ctrl+C to stop")
         
         try:
-            # Keep server running
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:

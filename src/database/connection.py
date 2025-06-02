@@ -8,7 +8,7 @@ import transaction
 import time
 from config.settings import DATABASE_CONFIG, NETWORK_CONFIG, DEBUG
 
-DATABASE_URL = "sqlite:///tasks.db"  # Update with your database URL
+DATABASE_URL = "sqlite:///tasks.db" 
 
 engine = create_engine(DATABASE_URL)
 Session = sessionmaker(bind=engine)
@@ -27,7 +27,6 @@ class DatabaseConnection:
         
     def connect(self, server_host=None, server_port=None):
         """Kết nối tới ZEO server với retry logic"""
-        # Sử dụng config từ .env hoặc tham số truyền vào
         host = server_host or DATABASE_CONFIG['host']
         port = server_port or DATABASE_CONFIG['port']
         
@@ -39,13 +38,11 @@ class DatabaseConnection:
                 if DEBUG:
                     print(f"Attempt {attempt + 1}/{retry_attempts}: Connecting to ZEO server at {host}:{port}")
                 
-                # Kết nối tới ZEO server
                 import ZEO
                 self.db = ZEO.DB((host, port))
                 self.connection = self.db.open()
                 self.root = self.connection.root()
-                
-                # Khởi tạo cấu trúc dữ liệu nếu chưa có
+            
                 if 'users' not in self.root:
                     self.root['users'] = PersistentMapping()
                     transaction.commit()
@@ -73,9 +70,7 @@ class DatabaseConnection:
         """Reload connection để sync với ZEO server"""
         try:
             if self.connection:
-                # Sync với server để lấy dữ liệu mới nhất
                 self.connection.sync()
-                # Cập nhật root object
                 self.root = self.connection.root()
                 if DEBUG:
                     print("🔄 Connection reloaded successfully")
@@ -114,7 +109,6 @@ class DatabaseConnection:
     
     def get_root(self):
         """Lấy root object với sync"""
-        # Sync trước khi trả về root để đảm bảo dữ liệu mới nhất
         self.reload_connection()
         return self.root
     
@@ -131,5 +125,4 @@ class DatabaseConnection:
                 return False
         return self.connection is not None
 
-# Singleton instance
 db_connection = DatabaseConnection()

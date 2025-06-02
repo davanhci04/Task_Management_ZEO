@@ -69,7 +69,6 @@ class EditTaskDialog(QDialog):
         layout.addLayout(button_layout)
         self.setLayout(layout)
         
-        # Set focus to title field
         self.title_edit.setFocus()
         
     def save_changes(self):
@@ -84,7 +83,7 @@ class EditTaskDialog(QDialog):
                                    f"Are you sure you want to delete task '{self.task.title}'?",
                                    QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
-            self.done(2)  # Custom result code for delete
+            self.done(2) 
         
     def get_task_data(self):
         return {
